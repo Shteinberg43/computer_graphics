@@ -3,6 +3,10 @@
 #include <dxgi.h>
 #include <assert.h>
 #include <tchar.h>
+#include <string>
+#include <vector>
+#include <d3dcompiler.h>
+#include <iostream>
 
 
 #define SAFE_RELEASE(p) if (p) { (p)->Release(); (p) = nullptr; }
@@ -13,14 +17,78 @@ ID3D11DeviceContext* m_pDeviceContext = nullptr;
 IDXGISwapChain* m_pSwapChain = nullptr;
 ID3D11RenderTargetView* m_pBackBufferRTV = nullptr;
 
+ID3D11Buffer* m_pVertexBuffer = nullptr;
+ID3D11Buffer* m_pIndexBuffer = nullptr;
+ID3D11VertexShader* m_pVertexShader = nullptr;
+ID3D11PixelShader* m_pPixelShader = nullptr;
+ID3D11InputLayout* m_pInputLayout = nullptr;
+
 UINT WindowWidth = 1280;
 UINT WindowHeight = 720;
 
+struct Vertex
+{
+    float x, y, z;
+    COLORREF color;
+};
+
+inline HRESULT SetResourceName(ID3D11DeviceChild* pResource, const std::string& name)
+{
+    return pResource->SetPrivateData(WKPDID_D3DDebugObjectName, (UINT)name.length(), name.c_str());
+}
+
 HRESULT InitDirectX(HWND hWnd);
+HRESULT InitScene();
+
 void Cleanup();
 void Render();
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 
+HRESULT CompileShaderFromFile(const std::wstring& path, ID3DBlob** ppCode)
+{
+    FILE* pFile = nullptr;
+    _wfopen_s(&pFile, path.c_str(), L"rb");
+    if (!pFile) return E_FAIL;
+
+    fseek(pFile, 0, SEEK_END);
+    long size = ftell(pFile);
+    fseek(pFile, 0, SEEK_SET);
+
+    std::vector<char> data(size);
+    fread(data.data(), 1, size, pFile);
+    fclose(pFile);
+
+    std::string entryPoint = "";
+    std::string platform = "";
+
+    if (path.find(L".vs") != std::wstring::npos) 
+    { 
+        entryPoint = "vs"; 
+        platform = "vs_5_0"; 
+    }
+    else if (path.find(L".ps") != std::wstring::npos) 
+    { 
+        entryPoint = "ps"; 
+        platform = "ps_5_0"; 
+    }
+
+    UINT flags1 = 0;
+#ifdef _DEBUG
+    flags1 |= D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#endif
+
+    ID3DBlob* pErrMsg = nullptr;
+
+    std::string pathA(path.begin(), path.end());
+    HRESULT result = D3DCompile(data.data(), data.size(), pathA.c_str(), nullptr, nullptr, entryPoint.c_str(), platform.c_str(), flags1, 0, ppCode, &pErrMsg);
+
+    if (!SUCCEEDED(result) && pErrMsg != nullptr)
+    {
+        OutputDebugStringA((const char*)pErrMsg->GetBufferPointer());
+    }
+    SAFE_RELEASE(pErrMsg);
+    return result;
+}
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nCmdShow)
 {
@@ -47,6 +115,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     {
         Cleanup();
         return 0;
+    }
+
+    if (FAILED(InitScene())) 
+    { 
+        Cleanup(); 
+        return 0; 
     }
 
     MSG msg = { 0 };
@@ -156,6 +230,110 @@ HRESULT InitDirectX(HWND hWnd)
     return result;
 }
 
+HRESULT InitScene()
+{
+    HRESULT result;
+
+    static const Vertex Vertices[] = {
+        {-0.5f, -0.5f, 0.0f, RGB(255, 0, 0)},
+        { 0.5f, -0.5f, 0.0f, RGB(0, 255, 0)},
+        { 0.0f,  0.5f, 0.0f, RGB(0, 0, 255)}
+    };
+
+    D3D11_BUFFER_DESC desc = {};
+    desc.ByteWidth = sizeof(Vertices);
+    desc.Usage = D3D11_USAGE_IMMUTABLE;
+    desc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    desc.CPUAccessFlags = 0;
+    desc.MiscFlags = 0;
+    desc.StructureByteStride = 0;
+
+    D3D11_SUBRESOURCE_DATA data;
+    data.pSysMem = &Vertices;
+    data.SysMemPitch = sizeof(Vertices);
+    data.SysMemSlicePitch = 0;
+
+    result = m_pDevice->CreateBuffer(&desc, &data, &m_pVertexBuffer);
+    if (SUCCEEDED(result))
+    {
+        result = SetResourceName(m_pVertexBuffer, "VertexBuffer");
+    }
+    
+    if (SUCCEEDED(result))
+    {
+        static const USHORT Indices[] = { 0, 2, 1 };
+
+        desc = {};
+        desc.ByteWidth = sizeof(Indices);
+        desc.Usage = D3D11_USAGE_IMMUTABLE;
+        desc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+        desc.CPUAccessFlags = 0;
+        desc.MiscFlags = 0;
+        desc.StructureByteStride = 0;
+
+        data.pSysMem = &Indices;
+        data.SysMemPitch = sizeof(Indices);
+        data.SysMemSlicePitch = 0;
+
+        result = m_pDevice->CreateBuffer(&desc, &data, &m_pIndexBuffer);
+        if (SUCCEEDED(result))
+        {
+            result = SetResourceName(m_pIndexBuffer, "IndexBuffer");
+        }
+    }
+
+    ID3DBlob* pVertexShaderCode = nullptr;
+    if (SUCCEEDED(result))
+    {
+        if (SUCCEEDED(CompileShaderFromFile(L"triangle.vs", &pVertexShaderCode)))
+        {
+            result = m_pDevice->CreateVertexShader(pVertexShaderCode->GetBufferPointer(), pVertexShaderCode->GetBufferSize(), nullptr, &m_pVertexShader);
+            if (SUCCEEDED(result))
+            {
+                result = SetResourceName(m_pVertexShader, "triangle.vs");
+            }
+        }
+        else
+        {
+            return E_FAIL;
+        }
+    }
+
+    ID3DBlob* pPixelShaderCode = nullptr;
+    if (SUCCEEDED(result))
+    {
+        if (SUCCEEDED(CompileShaderFromFile(L"triangle.ps", &pPixelShaderCode)))
+        {
+            result = m_pDevice->CreatePixelShader(pPixelShaderCode->GetBufferPointer(), pPixelShaderCode->GetBufferSize(), nullptr, &m_pPixelShader);
+            if (SUCCEEDED(result))
+            {
+                result = SetResourceName(m_pPixelShader, "triangle.ps");
+            }
+            SAFE_RELEASE(pPixelShaderCode);
+        }
+        else
+        {
+            return E_FAIL;
+        }
+    }
+    if (SUCCEEDED(result))
+    {
+        static const D3D11_INPUT_ELEMENT_DESC InputDesc[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0}
+        };
+
+        result = m_pDevice->CreateInputLayout(InputDesc, 2, pVertexShaderCode->GetBufferPointer(), pVertexShaderCode->GetBufferSize(), &m_pInputLayout);
+        if (SUCCEEDED(result))
+        {
+            result = SetResourceName(m_pInputLayout, "InputLayout");
+        }
+    }
+    SAFE_RELEASE(pVertexShaderCode);
+
+    return result;
+}
+
 void Render()
 {
     if (!m_pDeviceContext || !m_pSwapChain) return;
@@ -168,12 +346,47 @@ void Render()
     static const FLOAT BackColor[4] = { 1.0f, 0.125f, 0.25f, 1.0f };
     m_pDeviceContext->ClearRenderTargetView(m_pBackBufferRTV, BackColor);
 
+    D3D11_VIEWPORT viewport;
+    viewport.TopLeftX = 0;
+    viewport.TopLeftY = 0;
+    viewport.Width = (FLOAT)WindowWidth;
+    viewport.Height = (FLOAT)WindowHeight;
+    viewport.MinDepth = 0.0f;
+    viewport.MaxDepth = 1.0f;
+    m_pDeviceContext->RSSetViewports(1, &viewport);
+
+    D3D11_RECT rect;
+    rect.left = 0;
+    rect.top = 0;
+    rect.right = WindowWidth;
+    rect.bottom = WindowHeight;
+    m_pDeviceContext->RSSetScissorRects(1, &rect);
+
+    m_pDeviceContext->IASetIndexBuffer(m_pIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+    ID3D11Buffer* vertexBuffers[] = { m_pVertexBuffer };
+    UINT strides[] = { 16 };
+    UINT offsets[] = { 0 };
+    m_pDeviceContext->IASetVertexBuffers(0, 1, vertexBuffers, strides, offsets);
+    m_pDeviceContext->IASetInputLayout(m_pInputLayout);
+    m_pDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+    m_pDeviceContext->VSSetShader(m_pVertexShader, nullptr, 0);
+    m_pDeviceContext->PSSetShader(m_pPixelShader, nullptr, 0);
+
+    m_pDeviceContext->DrawIndexed(3, 0, 0);
+
     HRESULT result = m_pSwapChain->Present(0, 0);
     assert(SUCCEEDED(result));
 }
 
 void Cleanup()
 {
+    SAFE_RELEASE(m_pInputLayout);
+    SAFE_RELEASE(m_pVertexShader);
+    SAFE_RELEASE(m_pPixelShader);
+    SAFE_RELEASE(m_pIndexBuffer);
+    SAFE_RELEASE(m_pVertexBuffer);
+
     SAFE_RELEASE(m_pBackBufferRTV);
     SAFE_RELEASE(m_pSwapChain);
     SAFE_RELEASE(m_pDeviceContext);
@@ -206,9 +419,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             SAFE_RELEASE(m_pBackBufferRTV);
 
 
-            UINT width = LOWORD(lParam);
-            UINT height = HIWORD(lParam);
-            m_pSwapChain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0);
+            WindowWidth = LOWORD(lParam);
+            WindowHeight = HIWORD(lParam);
+            m_pSwapChain->ResizeBuffers(0, WindowWidth, WindowHeight, DXGI_FORMAT_UNKNOWN, 0);
 
             ID3D11Texture2D* pBackBuffer = NULL;
             m_pSwapChain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&pBackBuffer);
