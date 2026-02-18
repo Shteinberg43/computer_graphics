@@ -6,7 +6,6 @@
 #include <string>
 #include <vector>
 #include <d3dcompiler.h>
-#include <iostream>
 
 
 #define SAFE_RELEASE(p) if (p) { (p)->Release(); (p) = nullptr; }
