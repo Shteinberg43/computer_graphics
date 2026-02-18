@@ -93,7 +93,7 @@ HRESULT InitDirectX(HWND hWnd)
                 pSelectedAdapter = pAdapter;
                 break;
             }
-            pAdapter->Release();
+            SAFE_RELEASE(pAdapter);
             adapterIdx++;
         }
     }
@@ -215,7 +215,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             if (pBackBuffer)
             {
                 m_pDevice->CreateRenderTargetView(pBackBuffer, nullptr, &m_pBackBufferRTV);
-                pBackBuffer->Release();
+                SAFE_RELEASE(pBackBuffer);
             }
         }
         break;
