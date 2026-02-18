@@ -19,4 +19,12 @@
       <Filter>Исходные файлы</Filter>
     </ClCompile>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="triangle.vs">
+      <Filter>Исходные файлы</Filter>
+    </None>
+    <None Include="triangle.ps">
+      <Filter>Исходные файлы</Filter>
+    </None>
+  </ItemGroup>
 </Project>
