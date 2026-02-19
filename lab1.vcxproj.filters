@@ -20,11 +20,11 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <None Include="triangle.vs">
+    <CopyFileToFolders Include="triangle.vs">
       <Filter>Исходные файлы</Filter>
-    </None>
-    <None Include="triangle.ps">
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="triangle.ps">
       <Filter>Исходные файлы</Filter>
-    </None>
+    </CopyFileToFolders>
   </ItemGroup>
 </Project>
