@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <d3dcompiler.h>
+#include <DirectXMath.h>
 
 
 #define SAFE_RELEASE(p) if (p) { (p)->Release(); (p) = nullptr; }
@@ -22,8 +23,24 @@ ID3D11VertexShader* m_pVertexShader = nullptr;
 ID3D11PixelShader* m_pPixelShader = nullptr;
 ID3D11InputLayout* m_pInputLayout = nullptr;
 
+ID3D11Buffer* m_pGeomBuffer = nullptr;
+ID3D11Buffer* m_pSceneBuffer = nullptr;
+
 UINT WindowWidth = 1280;
 UINT WindowHeight = 720;
+
+float m_camRotX = 0.0f;
+float m_camRotY = 0.0f;
+
+struct GeomBuffer
+{
+    DirectX::XMMATRIX m;
+};
+
+struct SceneBuffer
+{
+    DirectX::XMMATRIX vp;
+};
 
 struct Vertex
 {
@@ -234,9 +251,14 @@ HRESULT InitScene()
     HRESULT result;
 
     static const Vertex Vertices[] = {
-        {-0.5f, -0.5f, 0.0f, RGB(255, 0, 0)},
-        { 0.5f, -0.5f, 0.0f, RGB(0, 255, 0)},
-        { 0.0f,  0.5f, 0.0f, RGB(0, 0, 255)}
+        {-0.5f, -0.5f, -0.5f, RGB(255, 0, 0)},   // 0: Левый нижний ближний
+        { 0.5f, -0.5f, -0.5f, RGB(0, 255, 0)},   // 1: Правый нижний ближний
+        { 0.5f,  0.5f, -0.5f, RGB(0, 0, 255)},   // 2: Правый верхний ближний
+        {-0.5f,  0.5f, -0.5f, RGB(255, 255, 0)}, // 3: Левый верхний ближний
+        {-0.5f, -0.5f,  0.5f, RGB(255, 0, 255)}, // 4: Левый нижний дальний
+        { 0.5f, -0.5f,  0.5f, RGB(0, 255, 255)}, // 5: Правый нижний дальний
+        { 0.5f,  0.5f,  0.5f, RGB(255, 255, 255)},// 6: Правый верхний дальний
+        {-0.5f,  0.5f,  0.5f, RGB(0, 0, 0)}      // 7: Левый верхний дальний
     };
 
     D3D11_BUFFER_DESC desc = {};
@@ -260,7 +282,14 @@ HRESULT InitScene()
     
     if (SUCCEEDED(result))
     {
-        static const USHORT Indices[] = { 0, 2, 1 };
+        static const USHORT Indices[] = { 
+            0, 2, 1, 0, 3, 2, // Передняя
+            1, 6, 5, 1, 2, 6, // Правая
+            5, 7, 4, 5, 6, 7, // Задняя
+            4, 3, 0, 4, 7, 3, // Левая
+            3, 6, 2, 3, 7, 6, // Верхняя
+            4, 1, 5, 4, 0, 1  // Нижняя
+        };
 
         desc = {};
         desc.ByteWidth = sizeof(Indices);
@@ -330,12 +359,89 @@ HRESULT InitScene()
     }
     SAFE_RELEASE(pVertexShaderCode);
 
+    if (SUCCEEDED(result))
+    {
+        D3D11_BUFFER_DESC descGeom = {};
+        descGeom.ByteWidth = sizeof(GeomBuffer);
+        descGeom.Usage = D3D11_USAGE_DEFAULT;
+        descGeom.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+        descGeom.CPUAccessFlags = 0;
+        descGeom.MiscFlags = 0;
+        descGeom.StructureByteStride = 0;
+
+        result = m_pDevice->CreateBuffer(&descGeom, nullptr, &m_pGeomBuffer);
+        assert(SUCCEEDED(result));
+        if (SUCCEEDED(result))
+        {
+            result = SetResourceName(m_pGeomBuffer, "GeomBuffer");
+        }
+        if (SUCCEEDED(result))
+        {
+            D3D11_BUFFER_DESC descScene = {};
+            descScene.ByteWidth = sizeof(SceneBuffer);
+            descScene.Usage = D3D11_USAGE_DYNAMIC;
+            descScene.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+            descScene.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            descGeom.MiscFlags = 0;
+            descGeom.StructureByteStride = 0;
+
+            result = m_pDevice->CreateBuffer(&descScene, nullptr, &m_pSceneBuffer);
+            assert(SUCCEEDED(result));
+            if (SUCCEEDED(result))
+            {
+                result = SetResourceName(m_pSceneBuffer, "SceneBuffer");
+            }
+        }
+    }
     return result;
 }
 
 void Render()
 {
     if (!m_pDeviceContext || !m_pSwapChain) return;
+
+    if (GetAsyncKeyState(VK_LEFT) & 0x8000) m_camRotY -= 0.02f;
+    if (GetAsyncKeyState(VK_RIGHT) & 0x8000) m_camRotY += 0.02f;
+    if (GetAsyncKeyState(VK_UP) & 0x8000) m_camRotX -= 0.02f;
+    if (GetAsyncKeyState(VK_DOWN) & 0x8000) m_camRotX += 0.02f;
+
+    if (m_camRotX > 1.5f) m_camRotX = 1.5f;
+    if (m_camRotX < -1.5f) m_camRotX = -1.5f;
+
+    static ULONGLONG timeStart = GetTickCount64();
+    ULONGLONG timeCur = GetTickCount64();
+    float time = (timeCur - timeStart) / 1000.0f;
+    double angle = time * DirectX::XM_PI * 0.5;
+
+    float f = 100.0f;
+    float n = 0.1f;
+    float fov = (float)DirectX::XM_PI / 3;
+    float aspectRatio = (float)WindowHeight / (float)WindowWidth;
+
+    DirectX::XMMATRIX m = DirectX::XMMatrixRotationAxis(DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 1.0f), -(float)angle);
+
+    DirectX::XMMATRIX camRotation = DirectX::XMMatrixRotationRollPitchYaw(m_camRotX, m_camRotY, 0.0f);
+
+    DirectX::XMMATRIX v = DirectX::XMMatrixInverse(nullptr, DirectX::XMMatrixMultiply(camRotation, DirectX::XMMatrixTranslation(0, 0, -5.5f)));
+
+    float viewWidth = tanf(fov / 2) * 2 * n;
+    float viewHeight = viewWidth * aspectRatio;
+
+    DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveLH(viewWidth, viewHeight, n, f);
+
+    GeomBuffer geomBuffer;
+    geomBuffer.m = m;
+    m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &geomBuffer, 0, 0);
+
+    D3D11_MAPPED_SUBRESOURCE subresource;
+    HRESULT result = m_pDeviceContext->Map(m_pSceneBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &subresource);
+    assert(SUCCEEDED(result));
+    if (SUCCEEDED(result))
+    {
+        SceneBuffer& sceneBuffer = *reinterpret_cast<SceneBuffer*>(subresource.pData);
+        sceneBuffer.vp = DirectX::XMMatrixMultiply(v, p);
+        m_pDeviceContext->Unmap(m_pSceneBuffer, 0);
+    }
 
     m_pDeviceContext->ClearState();
 
@@ -369,12 +475,15 @@ void Render()
     m_pDeviceContext->IASetInputLayout(m_pInputLayout);
     m_pDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
+    ID3D11Buffer* constBuffers[] = { m_pGeomBuffer, m_pSceneBuffer };
+    m_pDeviceContext->VSSetConstantBuffers(0, 2, constBuffers);
+
     m_pDeviceContext->VSSetShader(m_pVertexShader, nullptr, 0);
     m_pDeviceContext->PSSetShader(m_pPixelShader, nullptr, 0);
 
-    m_pDeviceContext->DrawIndexed(3, 0, 0);
+    m_pDeviceContext->DrawIndexed(36, 0, 0);
 
-    HRESULT result = m_pSwapChain->Present(0, 0);
+    result = m_pSwapChain->Present(0, 0);
     assert(SUCCEEDED(result));
 }
 
@@ -390,6 +499,8 @@ void Cleanup()
     SAFE_RELEASE(m_pSwapChain);
     SAFE_RELEASE(m_pDeviceContext);
 
+    SAFE_RELEASE(m_pGeomBuffer);
+    SAFE_RELEASE(m_pSceneBuffer);
     if (m_pDevice)
     {
         ID3D11Debug* d3dDebug = nullptr;
