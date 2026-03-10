@@ -7,6 +7,7 @@
 #include <vector>
 #include <d3dcompiler.h>
 #include <DirectXMath.h>
+#include "DDSTextureLoader11.h"
 
 
 #define SAFE_RELEASE(p) if (p) { (p)->Release(); (p) = nullptr; }
@@ -26,6 +27,17 @@ ID3D11InputLayout* m_pInputLayout = nullptr;
 ID3D11Buffer* m_pGeomBuffer = nullptr;
 ID3D11Buffer* m_pSceneBuffer = nullptr;
 
+ID3D11ShaderResourceView* m_pTextureView = nullptr;
+ID3D11SamplerState* m_pSampler = nullptr;
+
+ID3D11Buffer* m_pSkyboxVertexBuffer = nullptr;
+ID3D11Buffer* m_pSkyboxIndexBuffer = nullptr;
+UINT m_SkyboxIndexCount = 0;
+
+ID3D11VertexShader* m_pSkyboxVertexShader = nullptr;
+ID3D11PixelShader* m_pSkyboxPixelShader = nullptr;
+ID3D11ShaderResourceView* m_pSkyboxTextureView = nullptr;
+
 UINT WindowWidth = 1280;
 UINT WindowHeight = 720;
 
@@ -35,17 +47,19 @@ float m_camRotY = 0.0f;
 struct GeomBuffer
 {
     DirectX::XMMATRIX m;
+    DirectX::XMFLOAT4 size;
 };
 
 struct SceneBuffer
 {
     DirectX::XMMATRIX vp;
+    DirectX::XMFLOAT4 cameraPos;
 };
 
 struct Vertex
 {
     float x, y, z;
-    COLORREF color;
+    float u, v;
 };
 
 inline HRESULT SetResourceName(ID3D11DeviceChild* pResource, const std::string& name)
@@ -250,15 +264,25 @@ HRESULT InitScene()
 {
     HRESULT result;
 
-    static const Vertex Vertices[] = {
-        {-0.5f, -0.5f, -0.5f, RGB(255, 0, 0)},   // 0: Левый нижний ближний
-        { 0.5f, -0.5f, -0.5f, RGB(0, 255, 0)},   // 1: Правый нижний ближний
-        { 0.5f,  0.5f, -0.5f, RGB(0, 0, 255)},   // 2: Правый верхний ближний
-        {-0.5f,  0.5f, -0.5f, RGB(255, 255, 0)}, // 3: Левый верхний ближний
-        {-0.5f, -0.5f,  0.5f, RGB(255, 0, 255)}, // 4: Левый нижний дальний
-        { 0.5f, -0.5f,  0.5f, RGB(0, 255, 255)}, // 5: Правый нижний дальний
-        { 0.5f,  0.5f,  0.5f, RGB(255, 255, 255)},// 6: Правый верхний дальний
-        {-0.5f,  0.5f,  0.5f, RGB(0, 0, 0)}      // 7: Левый верхний дальний
+    static const Vertex Vertices[24] = {
+        // Front face
+            {-0.5f, -0.5f, -0.5f, 0.0f, 1.0f}, { 0.5f, -0.5f, -0.5f, 1.0f, 1.0f},
+            { 0.5f,  0.5f, -0.5f, 1.0f, 0.0f}, {-0.5f,  0.5f, -0.5f, 0.0f, 0.0f},
+            // Back face
+            { 0.5f, -0.5f,  0.5f, 0.0f, 1.0f}, {-0.5f, -0.5f,  0.5f, 1.0f, 1.0f},
+            {-0.5f,  0.5f,  0.5f, 1.0f, 0.0f}, { 0.5f,  0.5f,  0.5f, 0.0f, 0.0f},
+            // Left face
+            {-0.5f, -0.5f,  0.5f, 0.0f, 1.0f}, {-0.5f, -0.5f, -0.5f, 1.0f, 1.0f},
+            {-0.5f,  0.5f, -0.5f, 1.0f, 0.0f}, {-0.5f,  0.5f,  0.5f, 0.0f, 0.0f},
+            // Right face
+            { 0.5f, -0.5f, -0.5f, 0.0f, 1.0f}, { 0.5f, -0.5f,  0.5f, 1.0f, 1.0f},
+            { 0.5f,  0.5f,  0.5f, 1.0f, 0.0f}, { 0.5f,  0.5f, -0.5f, 0.0f, 0.0f},
+            // Top face
+            {-0.5f,  0.5f, -0.5f, 0.0f, 1.0f}, { 0.5f,  0.5f, -0.5f, 1.0f, 1.0f},
+            { 0.5f,  0.5f,  0.5f, 1.0f, 0.0f}, {-0.5f,  0.5f,  0.5f, 0.0f, 0.0f},
+            // Bottom face
+            {-0.5f, -0.5f,  0.5f, 0.0f, 1.0f}, { 0.5f, -0.5f,  0.5f, 1.0f, 1.0f},
+            { 0.5f, -0.5f, -0.5f, 1.0f, 0.0f}, {-0.5f, -0.5f, -0.5f, 0.0f, 0.0f}
     };
 
     D3D11_BUFFER_DESC desc = {};
@@ -282,13 +306,13 @@ HRESULT InitScene()
     
     if (SUCCEEDED(result))
     {
-        static const USHORT Indices[] = { 
+        static const USHORT Indices[36] = { 
             0, 2, 1, 0, 3, 2, // Передняя
-            1, 6, 5, 1, 2, 6, // Правая
-            5, 7, 4, 5, 6, 7, // Задняя
-            4, 3, 0, 4, 7, 3, // Левая
-            3, 6, 2, 3, 7, 6, // Верхняя
-            4, 1, 5, 4, 0, 1  // Нижняя
+            4, 6, 5, 4, 7, 6, // Задняя
+            8, 10, 9, 8, 11, 10, // Левая
+            12, 14, 13, 12, 15, 14, // Правая
+            16, 18, 17, 16, 19, 18, // Верхняя
+            20, 22, 21, 20, 23, 22  // Нижняя
         };
 
         desc = {};
@@ -348,7 +372,7 @@ HRESULT InitScene()
     {
         static const D3D11_INPUT_ELEMENT_DESC InputDesc[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0}
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0}
         };
 
         result = m_pDevice->CreateInputLayout(InputDesc, 2, pVertexShaderCode->GetBufferPointer(), pVertexShaderCode->GetBufferSize(), &m_pInputLayout);
@@ -393,6 +417,94 @@ HRESULT InitScene()
             }
         }
     }
+
+    if (SUCCEEDED(result))
+    {
+        result = DirectX::CreateDDSTextureFromFile(
+            m_pDevice,
+            L"a.dds",
+            nullptr,
+            &m_pTextureView
+        );
+    }
+
+    if (SUCCEEDED(result))
+    {
+        D3D11_SAMPLER_DESC sampDesc = {};
+        sampDesc.Filter = D3D11_FILTER_ANISOTROPIC;
+        sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+        sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+        sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+        sampDesc.MinLOD = -FLT_MAX;
+        sampDesc.MaxLOD = FLT_MAX;
+        sampDesc.MipLODBias = 0.0f;
+        sampDesc.MaxAnisotropy = 16;
+        sampDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+        sampDesc.BorderColor[0] = sampDesc.BorderColor[1] = sampDesc.BorderColor[2] = sampDesc.BorderColor[3] = 1.0f;
+
+        result = m_pDevice->CreateSamplerState(&sampDesc, &m_pSampler);
+        if (SUCCEEDED(result))
+        {
+            result = SetResourceName(m_pSampler, "Sampler");
+        }
+    }
+
+    std::vector<Vertex> sphereVertices;
+    std::vector<USHORT> sphereIndices;
+    int latLines = 20, longLines = 20;
+
+    for (int i = 0; i <= latLines; ++i) {
+        float theta = i * DirectX::XM_PI / latLines;
+        for (int j = 0; j <= longLines; ++j) {
+            float phi = j * 2 * DirectX::XM_PI / longLines;
+            Vertex v;
+            v.x = sinf(theta) * cosf(phi);
+            v.y = cosf(theta);
+            v.z = sinf(theta) * sinf(phi);
+            v.u = 0.0f; v.v = 0.0f;
+            sphereVertices.push_back(v);
+        }
+    }
+    for (int i = 0; i < latLines; ++i) {
+        for (int j = 0; j < longLines; ++j) {
+            int first = (i * (longLines + 1)) + j;
+            int second = first + longLines + 1;
+
+            sphereIndices.push_back(first);
+            sphereIndices.push_back(second);
+            sphereIndices.push_back(first + 1);
+
+            sphereIndices.push_back(second);
+            sphereIndices.push_back(second + 1);
+            sphereIndices.push_back(first + 1);
+        }
+    }
+    m_SkyboxIndexCount = (UINT)sphereIndices.size();
+
+    D3D11_BUFFER_DESC sbDesc = {};
+    sbDesc.ByteWidth = sizeof(Vertex) * (UINT)sphereVertices.size();
+    sbDesc.Usage = D3D11_USAGE_IMMUTABLE;
+    sbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+    D3D11_SUBRESOURCE_DATA sbData = {};
+    sbData.pSysMem = sphereVertices.data();
+    m_pDevice->CreateBuffer(&sbDesc, &sbData, &m_pSkyboxVertexBuffer);
+
+    sbDesc.ByteWidth = sizeof(USHORT) * m_SkyboxIndexCount;
+    sbDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+    sbData.pSysMem = sphereIndices.data();
+    m_pDevice->CreateBuffer(&sbDesc, &sbData, &m_pSkyboxIndexBuffer);
+
+    ID3DBlob* pBlob = nullptr;
+    CompileShaderFromFile(L"skybox.vs", &pBlob);
+    m_pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &m_pSkyboxVertexShader);
+    SAFE_RELEASE(pBlob);
+
+    CompileShaderFromFile(L"skybox.ps", &pBlob);
+    m_pDevice->CreatePixelShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &m_pSkyboxPixelShader);
+    SAFE_RELEASE(pBlob);
+
+    DirectX::CreateDDSTextureFromFile(m_pDevice, L"sun.dds", nullptr, &m_pSkyboxTextureView);
+
     return result;
 }
 
@@ -426,12 +538,14 @@ void Render()
 
     float viewWidth = tanf(fov / 2) * 2 * n;
     float viewHeight = viewWidth * aspectRatio;
+    float radius = sqrtf(n * n + (viewWidth / 2) * (viewWidth / 2) + (viewHeight / 2) * (viewHeight / 2)) * 1.1f;
+
+    DirectX::XMMATRIX camWorld = DirectX::XMMatrixMultiply(camRotation, DirectX::XMMatrixTranslation(0, 0, -5.5f));
+    DirectX::XMVECTOR camPosVec = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(0, 0, 0, 1.0f), camWorld);
+    DirectX::XMFLOAT4 camPos;
+    DirectX::XMStoreFloat4(&camPos, camPosVec);
 
     DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveLH(viewWidth, viewHeight, n, f);
-
-    GeomBuffer geomBuffer;
-    geomBuffer.m = m;
-    m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &geomBuffer, 0, 0);
 
     D3D11_MAPPED_SUBRESOURCE subresource;
     HRESULT result = m_pDeviceContext->Map(m_pSceneBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &subresource);
@@ -440,6 +554,7 @@ void Render()
     {
         SceneBuffer& sceneBuffer = *reinterpret_cast<SceneBuffer*>(subresource.pData);
         sceneBuffer.vp = DirectX::XMMatrixMultiply(v, p);
+        sceneBuffer.cameraPos = camPos;
         m_pDeviceContext->Unmap(m_pSceneBuffer, 0);
     }
 
@@ -467,19 +582,46 @@ void Render()
     rect.bottom = WindowHeight;
     m_pDeviceContext->RSSetScissorRects(1, &rect);
 
-    m_pDeviceContext->IASetIndexBuffer(m_pIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
-    ID3D11Buffer* vertexBuffers[] = { m_pVertexBuffer };
-    UINT strides[] = { 16 };
-    UINT offsets[] = { 0 };
-    m_pDeviceContext->IASetVertexBuffers(0, 1, vertexBuffers, strides, offsets);
     m_pDeviceContext->IASetInputLayout(m_pInputLayout);
     m_pDeviceContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
     ID3D11Buffer* constBuffers[] = { m_pGeomBuffer, m_pSceneBuffer };
     m_pDeviceContext->VSSetConstantBuffers(0, 2, constBuffers);
 
+    ID3D11SamplerState* samplers[] = { m_pSampler };
+    m_pDeviceContext->PSSetSamplers(0, 1, samplers);
+
+    UINT strides[] = { 20 };
+    UINT offsets[] = { 0 };
+
+    GeomBuffer skyboxGeom;
+    skyboxGeom.m = DirectX::XMMatrixIdentity();
+    skyboxGeom.size = DirectX::XMFLOAT4(radius, 0.0f, 0.0f, 0.0f);
+    m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &skyboxGeom, 0, 0);
+
+    m_pDeviceContext->IASetIndexBuffer(m_pSkyboxIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+    m_pDeviceContext->IASetVertexBuffers(0, 1, &m_pSkyboxVertexBuffer, strides, offsets);
+
+    m_pDeviceContext->VSSetShader(m_pSkyboxVertexShader, nullptr, 0);
+    m_pDeviceContext->PSSetShader(m_pSkyboxPixelShader, nullptr, 0);
+    m_pDeviceContext->PSSetShaderResources(0, 1, &m_pSkyboxTextureView);
+    m_pDeviceContext->DrawIndexed(m_SkyboxIndexCount, 0, 0);
+
+
+    GeomBuffer cubeGeom;
+    cubeGeom.m = m;
+    m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &cubeGeom, 0, 0);
+
+
+    m_pDeviceContext->IASetIndexBuffer(m_pIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+    ID3D11Buffer* vertexBuffers[] = { m_pVertexBuffer };
+    m_pDeviceContext->IASetVertexBuffers(0, 1, vertexBuffers, strides, offsets);
+
     m_pDeviceContext->VSSetShader(m_pVertexShader, nullptr, 0);
     m_pDeviceContext->PSSetShader(m_pPixelShader, nullptr, 0);
+
+    ID3D11ShaderResourceView* resources[] = { m_pTextureView };
+    m_pDeviceContext->PSSetShaderResources(0, 1, resources);
 
     m_pDeviceContext->DrawIndexed(36, 0, 0);
 
@@ -501,6 +643,16 @@ void Cleanup()
 
     SAFE_RELEASE(m_pGeomBuffer);
     SAFE_RELEASE(m_pSceneBuffer);
+
+    SAFE_RELEASE(m_pSampler);
+    SAFE_RELEASE(m_pTextureView);
+
+    SAFE_RELEASE(m_pSkyboxVertexBuffer);
+    SAFE_RELEASE(m_pSkyboxIndexBuffer);
+    SAFE_RELEASE(m_pSkyboxVertexShader);
+    SAFE_RELEASE(m_pSkyboxPixelShader);
+    SAFE_RELEASE(m_pSkyboxTextureView);
+
     if (m_pDevice)
     {
         ID3D11Debug* d3dDebug = nullptr;
