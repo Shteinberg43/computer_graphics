@@ -18,6 +18,9 @@
     <ClCompile Include="main.cpp">
       <Filter>Исходные файлы</Filter>
     </ClCompile>
+    <ClCompile Include="DDSTextureLoader11.cpp">
+      <Filter>Исходные файлы</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CopyFileToFolders Include="triangle.vs">
@@ -26,5 +29,22 @@
     <CopyFileToFolders Include="triangle.ps">
       <Filter>Исходные файлы</Filter>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="a.dds">
+      <Filter>Исходные файлы</Filter>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="skybox.ps">
+      <Filter>Исходные файлы</Filter>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="skybox.vs">
+      <Filter>Исходные файлы</Filter>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="sun.dds">
+      <Filter>Исходные файлы</Filter>
+    </CopyFileToFolders>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="DDSTextureLoader11.h">
+      <Filter>Исходные файлы</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
