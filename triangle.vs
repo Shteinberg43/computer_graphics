@@ -1,11 +1,11 @@
 cbuffer GeomBuffer : register(b0)
 {
-    float4x4 m;
+    row_major float4x4 m;
 };
 
 cbuffer SceneBuffer : register(b1)
 {
-    float4x4 vp;
+    row_major float4x4 vp;
 };
 
 struct VSInput

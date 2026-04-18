@@ -447,7 +447,7 @@ HRESULT InitScene()
         {
             result = SetResourceName(m_pSampler, "Sampler");
         }
-    }
+        }
 
     std::vector<Vertex> sphereVertices;
     std::vector<USHORT> sphereIndices;
@@ -540,7 +540,7 @@ void Render()
     float viewHeight = viewWidth * aspectRatio;
     float radius = sqrtf(n * n + (viewWidth / 2) * (viewWidth / 2) + (viewHeight / 2) * (viewHeight / 2)) * 1.1f;
 
-    DirectX::XMMATRIX camWorld = DirectX::XMMatrixMultiply(camRotation, DirectX::XMMatrixTranslation(0, 0, -5.5f));
+    DirectX::XMMATRIX camWorld = DirectX::XMMatrixInverse(nullptr, v);
     DirectX::XMVECTOR camPosVec = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(0, 0, 0, 1.0f), camWorld);
     DirectX::XMFLOAT4 camPos;
     DirectX::XMStoreFloat4(&camPos, camPosVec);

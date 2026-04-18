@@ -1,12 +1,12 @@
 cbuffer GeomBuffer : register(b0)
 {
-    float4x4 m;
+    row_major float4x4 m;
     float4 size;
 };
 
 cbuffer SceneBuffer : register(b1)
 {
-    float4x4 vp;
+    row_major float4x4 vp;
     float4 cameraPos;
 };
 
@@ -28,7 +28,7 @@ VSOutput vs(VSInput vertex)
 
     float3 pos = cameraPos.xyz + vertex.pos * size.x;
 
-    float4 worldPos = mul(float4(vertex.pos, 1.0f), m);
+    float4 worldPos = mul(float4(pos, 1.0f), m);
     result.pos = mul(worldPos, vp);
     result.localPos = vertex.pos;
     return result;
