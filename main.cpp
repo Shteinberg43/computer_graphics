@@ -493,7 +493,7 @@ HRESULT InitScene()
     sbDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
     sbData.pSysMem = sphereIndices.data();
     m_pDevice->CreateBuffer(&sbDesc, &sbData, &m_pSkyboxIndexBuffer);
-
+    
     ID3DBlob* pBlob = nullptr;
     CompileShaderFromFile(L"skybox.vs", &pBlob);
     m_pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &m_pSkyboxVertexShader);
@@ -503,7 +503,7 @@ HRESULT InitScene()
     m_pDevice->CreatePixelShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &m_pSkyboxPixelShader);
     SAFE_RELEASE(pBlob);
 
-    DirectX::CreateDDSTextureFromFile(m_pDevice, L"sun.dds", nullptr, &m_pSkyboxTextureView);
+    DirectX::CreateDDSTextureFromFile(m_pDevice, L"skybox.dds", nullptr, &m_pSkyboxTextureView);
 
     return result;
 }
@@ -512,10 +512,10 @@ void Render()
 {
     if (!m_pDeviceContext || !m_pSwapChain) return;
 
-    if (GetAsyncKeyState(VK_LEFT) & 0x8000) m_camRotY -= 0.02f;
-    if (GetAsyncKeyState(VK_RIGHT) & 0x8000) m_camRotY += 0.02f;
-    if (GetAsyncKeyState(VK_UP) & 0x8000) m_camRotX -= 0.02f;
-    if (GetAsyncKeyState(VK_DOWN) & 0x8000) m_camRotX += 0.02f;
+    if (GetAsyncKeyState(VK_LEFT) & 0x8000) m_camRotY -= 0.01f;
+    if (GetAsyncKeyState(VK_RIGHT) & 0x8000) m_camRotY += 0.01f;
+    if (GetAsyncKeyState(VK_UP) & 0x8000) m_camRotX -= 0.01f;
+    if (GetAsyncKeyState(VK_DOWN) & 0x8000) m_camRotX += 0.01f;
 
     if (m_camRotX > 1.5f) m_camRotX = 1.5f;
     if (m_camRotX < -1.5f) m_camRotX = -1.5f;

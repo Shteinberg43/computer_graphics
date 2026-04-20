@@ -38,7 +38,7 @@
     <CopyFileToFolders Include="skybox.vs">
       <Filter>Исходные файлы</Filter>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="sun.dds">
+    <CopyFileToFolders Include="skybox.dds">
       <Filter>Исходные файлы</Filter>
     </CopyFileToFolders>
   </ItemGroup>
