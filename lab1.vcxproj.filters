@@ -41,6 +41,9 @@
     <CopyFileToFolders Include="skybox.dds">
       <Filter>Исходные файлы</Filter>
     </CopyFileToFolders>
+    <CopyFileToFolders Include="transparent.ps">
+      <Filter>Исходные файлы</Filter>
+    </CopyFileToFolders>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DDSTextureLoader11.h">
