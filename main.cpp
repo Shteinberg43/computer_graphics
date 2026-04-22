@@ -5,6 +5,9 @@
 #include <tchar.h>
 #include <string>
 #include <vector>
+#include <array>
+#include <algorithm>
+#include <cmath>
 #include <d3dcompiler.h>
 #include <DirectXMath.h>
 #include "DDSTextureLoader11.h"
@@ -29,6 +32,7 @@ ID3D11Buffer* m_pSceneBuffer = nullptr;
 
 ID3D11ShaderResourceView* m_pTextureView = nullptr;
 ID3D11SamplerState* m_pSampler = nullptr;
+ID3D11PixelShader* m_pTransparentPixelShader = nullptr;
 
 ID3D11Buffer* m_pSkyboxVertexBuffer = nullptr;
 ID3D11Buffer* m_pSkyboxIndexBuffer = nullptr;
@@ -37,6 +41,14 @@ UINT m_SkyboxIndexCount = 0;
 ID3D11VertexShader* m_pSkyboxVertexShader = nullptr;
 ID3D11PixelShader* m_pSkyboxPixelShader = nullptr;
 ID3D11ShaderResourceView* m_pSkyboxTextureView = nullptr;
+ID3D11RasterizerState* m_pSkyboxRasterizerState = nullptr;
+
+ID3D11Texture2D* m_pDepthBuffer = nullptr;
+ID3D11DepthStencilView* m_pDepthBufferDSV = nullptr;
+ID3D11DepthStencilState* m_pOpaqueDepthState = nullptr;
+ID3D11DepthStencilState* m_pSkyboxDepthState = nullptr;
+ID3D11DepthStencilState* m_pTransDepthState = nullptr;
+ID3D11BlendState* m_pTransBlendState = nullptr;
 
 UINT WindowWidth = 1280;
 UINT WindowHeight = 720;
@@ -48,6 +60,7 @@ struct GeomBuffer
 {
     DirectX::XMMATRIX m;
     DirectX::XMFLOAT4 size;
+    DirectX::XMFLOAT4 color;
 };
 
 struct SceneBuffer
@@ -62,6 +75,13 @@ struct Vertex
     float u, v;
 };
 
+struct TransparentDrawItem
+{
+    DirectX::XMMATRIX world;
+    DirectX::XMFLOAT4 color;
+    float distanceSq;
+};
+
 inline HRESULT SetResourceName(ID3D11DeviceChild* pResource, const std::string& name)
 {
     return pResource->SetPrivateData(WKPDID_D3DDebugObjectName, (UINT)name.length(), name.c_str());
@@ -69,6 +89,7 @@ inline HRESULT SetResourceName(ID3D11DeviceChild* pResource, const std::string& 
 
 HRESULT InitDirectX(HWND hWnd);
 HRESULT InitScene();
+HRESULT CreateDepthResources();
 
 void Cleanup();
 void Render();
@@ -257,6 +278,51 @@ HRESULT InitDirectX(HWND hWnd)
         SAFE_RELEASE(pBackBuffer);
     }
 
+    if (SUCCEEDED(result))
+    {
+        result = CreateDepthResources();
+        assert(SUCCEEDED(result));
+    }
+
+    return result;
+}
+
+HRESULT CreateDepthResources()
+{
+    SAFE_RELEASE(m_pDepthBufferDSV);
+    SAFE_RELEASE(m_pDepthBuffer);
+
+    if (!m_pDevice || WindowWidth == 0 || WindowHeight == 0)
+        return S_OK;
+
+    D3D11_TEXTURE2D_DESC desc = {};
+    desc.Format = DXGI_FORMAT_D32_FLOAT;
+    desc.ArraySize = 1;
+    desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+    desc.CPUAccessFlags = 0;
+    desc.MiscFlags = 0;
+    desc.SampleDesc.Count = 1;
+    desc.SampleDesc.Quality = 0;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.Height = WindowHeight;
+    desc.Width = WindowWidth;
+    desc.MipLevels = 1;
+
+    HRESULT result = m_pDevice->CreateTexture2D(&desc, nullptr, &m_pDepthBuffer);
+    if (SUCCEEDED(result))
+    {
+        result = SetResourceName(m_pDepthBuffer, "DepthBuffer");
+    }
+
+    if (SUCCEEDED(result))
+    {
+        result = m_pDevice->CreateDepthStencilView(m_pDepthBuffer, nullptr, &m_pDepthBufferDSV);
+    }
+    if (SUCCEEDED(result))
+    {
+        result = SetResourceName(m_pDepthBufferDSV, "DepthBufferDSV");
+    }
+
     return result;
 }
 
@@ -368,6 +434,28 @@ HRESULT InitScene()
             return E_FAIL;
         }
     }
+
+    ID3DBlob* pTransparentPixelShaderCode = nullptr;
+    if (SUCCEEDED(result))
+    {
+        if (SUCCEEDED(CompileShaderFromFile(L"transparent.ps", &pTransparentPixelShaderCode)))
+        {
+            result = m_pDevice->CreatePixelShader(
+                pTransparentPixelShaderCode->GetBufferPointer(),
+                pTransparentPixelShaderCode->GetBufferSize(),
+                nullptr,
+                &m_pTransparentPixelShader);
+            if (SUCCEEDED(result))
+            {
+                result = SetResourceName(m_pTransparentPixelShader, "transparent.ps");
+            }
+            SAFE_RELEASE(pTransparentPixelShaderCode);
+        }
+        else
+        {
+            return E_FAIL;
+        }
+    }
     if (SUCCEEDED(result))
     {
         static const D3D11_INPUT_ELEMENT_DESC InputDesc[] = {
@@ -406,8 +494,8 @@ HRESULT InitScene()
             descScene.Usage = D3D11_USAGE_DYNAMIC;
             descScene.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
             descScene.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-            descGeom.MiscFlags = 0;
-            descGeom.StructureByteStride = 0;
+            descScene.MiscFlags = 0;
+            descScene.StructureByteStride = 0;
 
             result = m_pDevice->CreateBuffer(&descScene, nullptr, &m_pSceneBuffer);
             assert(SUCCEEDED(result));
@@ -447,7 +535,86 @@ HRESULT InitScene()
         {
             result = SetResourceName(m_pSampler, "Sampler");
         }
+    }
+
+    if (SUCCEEDED(result))
+    {
+        D3D11_DEPTH_STENCIL_DESC desc = {};
+        desc.DepthEnable = TRUE;
+        desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+        desc.DepthFunc = D3D11_COMPARISON_GREATER;
+        desc.StencilEnable = FALSE;
+        result = m_pDevice->CreateDepthStencilState(&desc, &m_pOpaqueDepthState);
+        if (SUCCEEDED(result))
+        {
+            result = SetResourceName(m_pOpaqueDepthState, "OpaqueDepthState");
         }
+    }
+
+    if (SUCCEEDED(result))
+    {
+        D3D11_DEPTH_STENCIL_DESC desc = {};
+        desc.DepthEnable = TRUE;
+        desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        desc.DepthFunc = D3D11_COMPARISON_GREATER_EQUAL;
+        desc.StencilEnable = FALSE;
+        result = m_pDevice->CreateDepthStencilState(&desc, &m_pSkyboxDepthState);
+        if (SUCCEEDED(result))
+        {
+            result = SetResourceName(m_pSkyboxDepthState, "SkyboxDepthState");
+        }
+    }
+
+    if (SUCCEEDED(result))
+    {
+        D3D11_DEPTH_STENCIL_DESC desc = {};
+        desc.DepthEnable = TRUE;
+        desc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+        desc.DepthFunc = D3D11_COMPARISON_GREATER;
+        desc.StencilEnable = FALSE;
+        result = m_pDevice->CreateDepthStencilState(&desc, &m_pTransDepthState);
+        if (SUCCEEDED(result))
+        {
+            result = SetResourceName(m_pTransDepthState, "TransDepthState");
+        }
+    }
+
+    if (SUCCEEDED(result))
+    {
+        D3D11_BLEND_DESC desc = {};
+        desc.AlphaToCoverageEnable = FALSE;
+        desc.IndependentBlendEnable = FALSE;
+        desc.RenderTarget[0].BlendEnable = TRUE;
+        desc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+        desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+        desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+        desc.RenderTarget[0].RenderTargetWriteMask =
+            D3D11_COLOR_WRITE_ENABLE_RED |
+            D3D11_COLOR_WRITE_ENABLE_GREEN |
+            D3D11_COLOR_WRITE_ENABLE_BLUE;
+        desc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+        desc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+        desc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+        result = m_pDevice->CreateBlendState(&desc, &m_pTransBlendState);
+        if (SUCCEEDED(result))
+        {
+            result = SetResourceName(m_pTransBlendState, "TransBlendState");
+        }
+    }
+
+    if (SUCCEEDED(result))
+    {
+        D3D11_RASTERIZER_DESC desc = {};
+        desc.FillMode = D3D11_FILL_SOLID;
+        desc.CullMode = D3D11_CULL_NONE;
+        desc.FrontCounterClockwise = FALSE;
+        desc.DepthClipEnable = TRUE;
+        result = m_pDevice->CreateRasterizerState(&desc, &m_pSkyboxRasterizerState);
+        if (SUCCEEDED(result))
+        {
+            result = SetResourceName(m_pSkyboxRasterizerState, "SkyboxRasterizerState");
+        }
+    }
 
     std::vector<Vertex> sphereVertices;
     std::vector<USHORT> sphereIndices;
@@ -511,6 +678,7 @@ HRESULT InitScene()
 void Render()
 {
     if (!m_pDeviceContext || !m_pSwapChain) return;
+    if (WindowWidth == 0 || WindowHeight == 0 || !m_pDepthBufferDSV) return;
 
     if (GetAsyncKeyState(VK_LEFT) & 0x8000) m_camRotY -= 0.01f;
     if (GetAsyncKeyState(VK_RIGHT) & 0x8000) m_camRotY += 0.01f;
@@ -530,22 +698,29 @@ void Render()
     float fov = (float)DirectX::XM_PI / 3;
     float aspectRatio = (float)WindowHeight / (float)WindowWidth;
 
-    DirectX::XMMATRIX m = DirectX::XMMatrixRotationAxis(DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 1.0f), -(float)angle);
+    DirectX::XMMATRIX cubeRot1 = DirectX::XMMatrixRotationAxis(
+        DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 1.0f),
+        -(float)angle);
+    DirectX::XMMATRIX cubeRot2 = DirectX::XMMatrixRotationAxis(
+        DirectX::XMVectorSet(1.0f, 1.0f, 0.0f, 1.0f),
+        (float)angle * 0.65f);
 
     DirectX::XMMATRIX camRotation = DirectX::XMMatrixRotationRollPitchYaw(m_camRotX, m_camRotY, 0.0f);
+    DirectX::XMMATRIX camTransform = DirectX::XMMatrixMultiply(camRotation, DirectX::XMMatrixTranslation(0, 0, -5.5f));
+    DirectX::XMMATRIX v = DirectX::XMMatrixInverse(nullptr, camTransform);
 
-    DirectX::XMMATRIX v = DirectX::XMMatrixInverse(nullptr, DirectX::XMMatrixMultiply(camRotation, DirectX::XMMatrixTranslation(0, 0, -5.5f)));
+    float projWidth = tanf(fov / 2) * 2 * f;
+    float projHeight = projWidth * aspectRatio;
+    DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveLH(projWidth, projHeight, f, n);
 
-    float viewWidth = tanf(fov / 2) * 2 * n;
-    float viewHeight = viewWidth * aspectRatio;
-    float radius = sqrtf(n * n + (viewWidth / 2) * (viewWidth / 2) + (viewHeight / 2) * (viewHeight / 2)) * 1.1f;
+    float nearViewWidth = tanf(fov / 2) * 2 * n;
+    float nearViewHeight = nearViewWidth * aspectRatio;
+    float radius = sqrtf(n * n + (nearViewWidth / 2) * (nearViewWidth / 2) + (nearViewHeight / 2) * (nearViewHeight / 2)) * 1.1f;
 
     DirectX::XMMATRIX camWorld = DirectX::XMMatrixInverse(nullptr, v);
     DirectX::XMVECTOR camPosVec = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(0, 0, 0, 1.0f), camWorld);
     DirectX::XMFLOAT4 camPos;
     DirectX::XMStoreFloat4(&camPos, camPosVec);
-
-    DirectX::XMMATRIX p = DirectX::XMMatrixPerspectiveLH(viewWidth, viewHeight, n, f);
 
     D3D11_MAPPED_SUBRESOURCE subresource;
     HRESULT result = m_pDeviceContext->Map(m_pSceneBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &subresource);
@@ -561,10 +736,11 @@ void Render()
     m_pDeviceContext->ClearState();
 
     ID3D11RenderTargetView* views[] = { m_pBackBufferRTV };
-    m_pDeviceContext->OMSetRenderTargets(1, views, nullptr);
+    m_pDeviceContext->OMSetRenderTargets(1, views, m_pDepthBufferDSV);
 
     static const FLOAT BackColor[4] = { 1.0f, 0.125f, 0.25f, 1.0f };
     m_pDeviceContext->ClearRenderTargetView(m_pBackBufferRTV, BackColor);
+    m_pDeviceContext->ClearDepthStencilView(m_pDepthBufferDSV, D3D11_CLEAR_DEPTH, 0.0f, 0);
 
     D3D11_VIEWPORT viewport;
     viewport.TopLeftX = 0;
@@ -587,6 +763,7 @@ void Render()
 
     ID3D11Buffer* constBuffers[] = { m_pGeomBuffer, m_pSceneBuffer };
     m_pDeviceContext->VSSetConstantBuffers(0, 2, constBuffers);
+    m_pDeviceContext->PSSetConstantBuffers(0, 2, constBuffers);
 
     ID3D11SamplerState* samplers[] = { m_pSampler };
     m_pDeviceContext->PSSetSamplers(0, 1, samplers);
@@ -594,28 +771,12 @@ void Render()
     UINT strides[] = { 20 };
     UINT offsets[] = { 0 };
 
-    GeomBuffer skyboxGeom;
-    skyboxGeom.m = DirectX::XMMatrixIdentity();
-    skyboxGeom.size = DirectX::XMFLOAT4(radius, 0.0f, 0.0f, 0.0f);
-    m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &skyboxGeom, 0, 0);
-
-    m_pDeviceContext->IASetIndexBuffer(m_pSkyboxIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
-    m_pDeviceContext->IASetVertexBuffers(0, 1, &m_pSkyboxVertexBuffer, strides, offsets);
-
-    m_pDeviceContext->VSSetShader(m_pSkyboxVertexShader, nullptr, 0);
-    m_pDeviceContext->PSSetShader(m_pSkyboxPixelShader, nullptr, 0);
-    m_pDeviceContext->PSSetShaderResources(0, 1, &m_pSkyboxTextureView);
-    m_pDeviceContext->DrawIndexed(m_SkyboxIndexCount, 0, 0);
-
-
-    GeomBuffer cubeGeom;
-    cubeGeom.m = m;
-    m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &cubeGeom, 0, 0);
-
-
     m_pDeviceContext->IASetIndexBuffer(m_pIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
     ID3D11Buffer* vertexBuffers[] = { m_pVertexBuffer };
     m_pDeviceContext->IASetVertexBuffers(0, 1, vertexBuffers, strides, offsets);
+
+    m_pDeviceContext->OMSetDepthStencilState(m_pOpaqueDepthState, 0);
+    m_pDeviceContext->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
 
     m_pDeviceContext->VSSetShader(m_pVertexShader, nullptr, 0);
     m_pDeviceContext->PSSetShader(m_pPixelShader, nullptr, 0);
@@ -623,7 +784,106 @@ void Render()
     ID3D11ShaderResourceView* resources[] = { m_pTextureView };
     m_pDeviceContext->PSSetShaderResources(0, 1, resources);
 
+    GeomBuffer cubeGeom = {};
+    cubeGeom.size = DirectX::XMFLOAT4(0, 0, 0, 0);
+    cubeGeom.color = DirectX::XMFLOAT4(1, 1, 1, 1);
+
+    DirectX::XMMATRIX cube1World = DirectX::XMMatrixMultiply(cubeRot1, DirectX::XMMatrixTranslation(-0.9f, 0.0f, 0.0f));
+    DirectX::XMVECTOR cube1Center = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(0, 0, 0, 1.0f), cube1World);
+    cubeGeom.m = cube1World;
+    m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &cubeGeom, 0, 0);
     m_pDeviceContext->DrawIndexed(36, 0, 0);
+
+    DirectX::XMMATRIX cube2World = DirectX::XMMatrixMultiply(
+        DirectX::XMMatrixMultiply(DirectX::XMMatrixScaling(0.75f, 0.75f, 0.75f), cubeRot2),
+        DirectX::XMMatrixTranslation(1.0f, 0.3f, 0.8f));
+    cubeGeom.m = cube2World;
+    m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &cubeGeom, 0, 0);
+    m_pDeviceContext->DrawIndexed(36, 0, 0);
+
+    m_pDeviceContext->OMSetDepthStencilState(m_pSkyboxDepthState, 0);
+
+    GeomBuffer skyboxGeom = {};
+    skyboxGeom.m = DirectX::XMMatrixIdentity();
+    skyboxGeom.size = DirectX::XMFLOAT4(radius, 0.0f, 0.0f, 0.0f);
+    skyboxGeom.color = DirectX::XMFLOAT4(1, 1, 1, 1);
+    m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &skyboxGeom, 0, 0);
+
+    m_pDeviceContext->IASetIndexBuffer(m_pSkyboxIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+    m_pDeviceContext->IASetVertexBuffers(0, 1, &m_pSkyboxVertexBuffer, strides, offsets);
+    m_pDeviceContext->VSSetShader(m_pSkyboxVertexShader, nullptr, 0);
+    m_pDeviceContext->PSSetShader(m_pSkyboxPixelShader, nullptr, 0);
+    m_pDeviceContext->PSSetShaderResources(0, 1, &m_pSkyboxTextureView);
+    m_pDeviceContext->RSSetState(m_pSkyboxRasterizerState);
+    m_pDeviceContext->DrawIndexed(m_SkyboxIndexCount, 0, 0);
+    m_pDeviceContext->RSSetState(nullptr);
+
+    m_pDeviceContext->IASetIndexBuffer(m_pIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+    m_pDeviceContext->IASetVertexBuffers(0, 1, vertexBuffers, strides, offsets);
+    m_pDeviceContext->VSSetShader(m_pVertexShader, nullptr, 0);
+    m_pDeviceContext->PSSetShader(m_pTransparentPixelShader, nullptr, 0);
+    ID3D11ShaderResourceView* nullResource[] = { nullptr };
+    m_pDeviceContext->PSSetShaderResources(0, 1, nullResource);
+    m_pDeviceContext->OMSetDepthStencilState(m_pTransDepthState, 0);
+    float blendFactor[4] = { 0, 0, 0, 0 };
+    m_pDeviceContext->OMSetBlendState(m_pTransBlendState, blendFactor, 0xFFFFFFFF);
+
+    std::array<TransparentDrawItem, 2> transparentItems = {};
+    auto buildOrbitPanel = [&](float orbitRadius, float phase, float speed, float orbitHeight, const DirectX::XMFLOAT3& panelScale)
+        {
+            float orbitAngle = phase + (float)angle * speed;
+            DirectX::XMVECTOR orbitOffset = DirectX::XMVectorSet(cosf(orbitAngle) * orbitRadius, orbitHeight, sinf(orbitAngle) * orbitRadius, 0.0f);
+            DirectX::XMVECTOR panelPos = DirectX::XMVectorAdd(cube1Center, orbitOffset);
+
+            DirectX::XMVECTOR normal = DirectX::XMVector3Normalize(orbitOffset);
+            DirectX::XMVECTOR upReference = DirectX::XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+            float absDot = DirectX::XMVectorGetX(DirectX::XMVector3Dot(normal, upReference));
+            if (absDot < 0.0f) absDot = -absDot;
+            if (absDot > 0.98f)
+            {
+                upReference = DirectX::XMVectorSet(1.0f, 0.0f, 0.0f, 0.0f);
+            }
+
+            DirectX::XMVECTOR tangentX = DirectX::XMVector3Normalize(DirectX::XMVector3Cross(upReference, normal));
+            DirectX::XMVECTOR tangentY = DirectX::XMVector3Normalize(DirectX::XMVector3Cross(normal, tangentX));
+
+            DirectX::XMMATRIX orientation = DirectX::XMMATRIX(tangentX, tangentY, normal, DirectX::XMVectorSet(0, 0, 0, 1));
+            DirectX::XMMATRIX scaling = DirectX::XMMatrixScaling(panelScale.x, panelScale.y, panelScale.z);
+            DirectX::XMMATRIX translation = DirectX::XMMatrixTranslationFromVector(panelPos);
+            return DirectX::XMMatrixMultiply(DirectX::XMMatrixMultiply(scaling, orientation), translation);
+        };
+
+    transparentItems[0].world = buildOrbitPanel(0.8f, 0.0f, 1.1f, 0.00f, DirectX::XMFLOAT3(1.2f, 1.2f, 0.01f));
+    transparentItems[0].color = DirectX::XMFLOAT4(0.2f, 0.8f, 1.0f, 0.45f);
+
+    transparentItems[1].world = buildOrbitPanel(1.1f, 0.0f, 1.1f, 0.35f, DirectX::XMFLOAT3(1.1f, 1.1f, 0.01f));
+    transparentItems[1].color = DirectX::XMFLOAT4(1.0f, 0.5f, 0.2f, 0.55f);
+
+    DirectX::XMVECTOR cameraPos3 = DirectX::XMVectorSet(camPos.x, camPos.y, camPos.z, 1.0f);
+    for (auto& item : transparentItems)
+    {
+        DirectX::XMVECTOR center = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(0, 0, 0, 1.0f), item.world);
+        DirectX::XMVECTOR delta = DirectX::XMVectorSubtract(center, cameraPos3);
+        item.distanceSq = DirectX::XMVectorGetX(DirectX::XMVector3LengthSq(delta));
+    }
+
+    std::sort(transparentItems.begin(), transparentItems.end(), [](const TransparentDrawItem& a, const TransparentDrawItem& b)
+        {
+            return a.distanceSq > b.distanceSq;
+        });
+
+    for (const auto& item : transparentItems)
+    {
+        GeomBuffer transGeom = {};
+        transGeom.m = item.world;
+        transGeom.size = DirectX::XMFLOAT4(0, 0, 0, 0);
+        transGeom.color = item.color;
+        m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &transGeom, 0, 0);
+        m_pDeviceContext->DrawIndexed(36, 0, 0);
+    }
+
+    m_pDeviceContext->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+    m_pDeviceContext->OMSetDepthStencilState(nullptr, 0);
 
     result = m_pSwapChain->Present(0, 0);
     assert(SUCCEEDED(result));
@@ -634,8 +894,17 @@ void Cleanup()
     SAFE_RELEASE(m_pInputLayout);
     SAFE_RELEASE(m_pVertexShader);
     SAFE_RELEASE(m_pPixelShader);
+    SAFE_RELEASE(m_pTransparentPixelShader);
     SAFE_RELEASE(m_pIndexBuffer);
     SAFE_RELEASE(m_pVertexBuffer);
+
+    SAFE_RELEASE(m_pDepthBufferDSV);
+    SAFE_RELEASE(m_pDepthBuffer);
+    SAFE_RELEASE(m_pOpaqueDepthState);
+    SAFE_RELEASE(m_pSkyboxDepthState);
+    SAFE_RELEASE(m_pTransDepthState);
+    SAFE_RELEASE(m_pTransBlendState);
+    SAFE_RELEASE(m_pSkyboxRasterizerState);
 
     SAFE_RELEASE(m_pBackBufferRTV);
     SAFE_RELEASE(m_pSwapChain);
@@ -679,6 +948,8 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         {
             m_pDeviceContext->OMSetRenderTargets(0, 0, 0);
             SAFE_RELEASE(m_pBackBufferRTV);
+            SAFE_RELEASE(m_pDepthBufferDSV);
+            SAFE_RELEASE(m_pDepthBuffer);
 
 
             WindowWidth = LOWORD(lParam);
@@ -692,6 +963,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
                 m_pDevice->CreateRenderTargetView(pBackBuffer, nullptr, &m_pBackBufferRTV);
                 SAFE_RELEASE(pBackBuffer);
             }
+            CreateDepthResources();
         }
         break;
 
@@ -703,3 +975,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     }
     return 0;
 }
+
+
+
+

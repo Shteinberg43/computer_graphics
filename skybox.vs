@@ -30,6 +30,7 @@ VSOutput vs(VSInput vertex)
 
     float4 worldPos = mul(float4(pos, 1.0f), m);
     result.pos = mul(worldPos, vp);
+    result.pos.z = 0.0f;
     result.localPos = vertex.pos;
     return result;
 }
