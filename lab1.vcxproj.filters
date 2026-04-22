@@ -23,6 +23,18 @@
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
+    <CopyFileToFolders Include="instanced.vs">
+      <Filter>Исходные файлы</Filter>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="instanced.ps">
+      <Filter>Исходные файлы</Filter>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="postprocess.vs">
+      <Filter>Исходные файлы</Filter>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="postprocess.ps">
+      <Filter>Исходные файлы</Filter>
+    </CopyFileToFolders>
     <CopyFileToFolders Include="triangle.vs">
       <Filter>Исходные файлы</Filter>
     </CopyFileToFolders>
@@ -42,6 +54,9 @@
       <Filter>Исходные файлы</Filter>
     </CopyFileToFolders>
     <CopyFileToFolders Include="BrickNM.dds">
+      <Filter>Исходные файлы</Filter>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="Kitty.dds">
       <Filter>Исходные файлы</Filter>
     </CopyFileToFolders>
   </ItemGroup>
