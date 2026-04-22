@@ -29,9 +29,6 @@
     <CopyFileToFolders Include="triangle.ps">
       <Filter>Исходные файлы</Filter>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="a.dds">
-      <Filter>Исходные файлы</Filter>
-    </CopyFileToFolders>
     <CopyFileToFolders Include="skybox.ps">
       <Filter>Исходные файлы</Filter>
     </CopyFileToFolders>
@@ -41,7 +38,10 @@
     <CopyFileToFolders Include="skybox.dds">
       <Filter>Исходные файлы</Filter>
     </CopyFileToFolders>
-    <CopyFileToFolders Include="transparent.ps">
+    <CopyFileToFolders Include="Brick.dds">
+      <Filter>Исходные файлы</Filter>
+    </CopyFileToFolders>
+    <CopyFileToFolders Include="BrickNM.dds">
       <Filter>Исходные файлы</Filter>
     </CopyFileToFolders>
   </ItemGroup>

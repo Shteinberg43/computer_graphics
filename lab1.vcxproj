@@ -139,12 +139,6 @@
     </CopyFileToFolders>
   </ItemGroup>
   <ItemGroup>
-    <CopyFileToFolders Include="a.dds">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">false</ExcludedFromBuild>
-      <DeploymentContent Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">true</DeploymentContent>
-    </CopyFileToFolders>
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="DDSTextureLoader11.h" />
   </ItemGroup>
   <ItemGroup>
@@ -170,9 +164,8 @@
     </CopyFileToFolders>
   </ItemGroup>
   <ItemGroup>
-    <CopyFileToFolders Include="transparent.ps">
-      <FileType>Document</FileType>
-    </CopyFileToFolders>
+    <CopyFileToFolders Include="Brick.dds" />
+    <CopyFileToFolders Include="BrickNM.dds" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
