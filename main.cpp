@@ -1,4 +1,4 @@
-#include <windows.h>
+Ôªø#include <windows.h>
 #include <d3d11.h>
 #include <dxgi.h>
 #include <assert.h>
@@ -31,8 +31,8 @@ ID3D11Buffer* m_pGeomBuffer = nullptr;
 ID3D11Buffer* m_pSceneBuffer = nullptr;
 
 ID3D11ShaderResourceView* m_pTextureView = nullptr;
+ID3D11ShaderResourceView* m_pNormalTextureView = nullptr;
 ID3D11SamplerState* m_pSampler = nullptr;
-ID3D11PixelShader* m_pTransparentPixelShader = nullptr;
 
 ID3D11Buffer* m_pSkyboxVertexBuffer = nullptr;
 ID3D11Buffer* m_pSkyboxIndexBuffer = nullptr;
@@ -40,6 +40,7 @@ UINT m_SkyboxIndexCount = 0;
 
 ID3D11VertexShader* m_pSkyboxVertexShader = nullptr;
 ID3D11PixelShader* m_pSkyboxPixelShader = nullptr;
+ID3D11InputLayout* m_pSkyboxInputLayout = nullptr;
 ID3D11ShaderResourceView* m_pSkyboxTextureView = nullptr;
 ID3D11RasterizerState* m_pSkyboxRasterizerState = nullptr;
 
@@ -53,13 +54,21 @@ ID3D11BlendState* m_pTransBlendState = nullptr;
 UINT WindowWidth = 1280;
 UINT WindowHeight = 720;
 
-float m_camRotX = 0.0f;
+float m_camRotX = 0.3f;
 float m_camRotY = 0.0f;
 
 struct GeomBuffer
 {
     DirectX::XMMATRIX m;
     DirectX::XMFLOAT4 size;
+    DirectX::XMMATRIX normalM;
+    DirectX::XMFLOAT4 color;
+    DirectX::XMFLOAT4 material;
+};
+
+struct Light
+{
+    DirectX::XMFLOAT4 pos;
     DirectX::XMFLOAT4 color;
 };
 
@@ -67,11 +76,16 @@ struct SceneBuffer
 {
     DirectX::XMMATRIX vp;
     DirectX::XMFLOAT4 cameraPos;
+    DirectX::XMINT4 lightCount;
+    Light lights[10];
+    DirectX::XMFLOAT4 ambientColor;
 };
 
 struct Vertex
 {
     float x, y, z;
+    float nx, ny, nz;
+    float tx, ty, tz;
     float u, v;
 };
 
@@ -161,7 +175,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLi
     if (!hWnd) return 0;
     ShowWindow(hWnd, nCmdShow);
 
-    // »ÌËˆË‡ÎËÁ‡ˆËˇ DirectX
+    // –ò–Ω–∏—Ü–∏–∞–ª–∏–∑–∞—Ü–∏—è DirectX
     if (FAILED(InitDirectX(hWnd)))
     {
         Cleanup();
@@ -332,23 +346,35 @@ HRESULT InitScene()
 
     static const Vertex Vertices[24] = {
         // Front face
-            {-0.5f, -0.5f, -0.5f, 0.0f, 1.0f}, { 0.5f, -0.5f, -0.5f, 1.0f, 1.0f},
-            { 0.5f,  0.5f, -0.5f, 1.0f, 0.0f}, {-0.5f,  0.5f, -0.5f, 0.0f, 0.0f},
-            // Back face
-            { 0.5f, -0.5f,  0.5f, 0.0f, 1.0f}, {-0.5f, -0.5f,  0.5f, 1.0f, 1.0f},
-            {-0.5f,  0.5f,  0.5f, 1.0f, 0.0f}, { 0.5f,  0.5f,  0.5f, 0.0f, 0.0f},
-            // Left face
-            {-0.5f, -0.5f,  0.5f, 0.0f, 1.0f}, {-0.5f, -0.5f, -0.5f, 1.0f, 1.0f},
-            {-0.5f,  0.5f, -0.5f, 1.0f, 0.0f}, {-0.5f,  0.5f,  0.5f, 0.0f, 0.0f},
-            // Right face
-            { 0.5f, -0.5f, -0.5f, 0.0f, 1.0f}, { 0.5f, -0.5f,  0.5f, 1.0f, 1.0f},
-            { 0.5f,  0.5f,  0.5f, 1.0f, 0.0f}, { 0.5f,  0.5f, -0.5f, 0.0f, 0.0f},
-            // Top face
-            {-0.5f,  0.5f, -0.5f, 0.0f, 1.0f}, { 0.5f,  0.5f, -0.5f, 1.0f, 1.0f},
-            { 0.5f,  0.5f,  0.5f, 1.0f, 0.0f}, {-0.5f,  0.5f,  0.5f, 0.0f, 0.0f},
-            // Bottom face
-            {-0.5f, -0.5f,  0.5f, 0.0f, 1.0f}, { 0.5f, -0.5f,  0.5f, 1.0f, 1.0f},
-            { 0.5f, -0.5f, -0.5f, 1.0f, 0.0f}, {-0.5f, -0.5f, -0.5f, 0.0f, 0.0f}
+        {-0.5f, -0.5f, -0.5f, 0, 0, -1, 1, 0, 0, 0.0f, 1.0f},
+        { 0.5f, -0.5f, -0.5f, 0, 0, -1, 1, 0, 0, 1.0f, 1.0f},
+        { 0.5f,  0.5f, -0.5f, 0, 0, -1, 1, 0, 0, 1.0f, 0.0f},
+        {-0.5f,  0.5f, -0.5f, 0, 0, -1, 1, 0, 0, 0.0f, 0.0f},
+        // Back face
+        { 0.5f, -0.5f,  0.5f, 0, 0, 1, -1, 0, 0, 0.0f, 1.0f},
+        {-0.5f, -0.5f,  0.5f, 0, 0, 1, -1, 0, 0, 1.0f, 1.0f},
+        {-0.5f,  0.5f,  0.5f, 0, 0, 1, -1, 0, 0, 1.0f, 0.0f},
+        { 0.5f,  0.5f,  0.5f, 0, 0, 1, -1, 0, 0, 0.0f, 0.0f},
+        // Left face
+        {-0.5f, -0.5f,  0.5f, -1, 0, 0, 0, 0, -1, 0.0f, 1.0f},
+        {-0.5f, -0.5f, -0.5f, -1, 0, 0, 0, 0, -1, 1.0f, 1.0f},
+        {-0.5f,  0.5f, -0.5f, -1, 0, 0, 0, 0, -1, 1.0f, 0.0f},
+        {-0.5f,  0.5f,  0.5f, -1, 0, 0, 0, 0, -1, 0.0f, 0.0f},
+        // Right face
+        { 0.5f, -0.5f, -0.5f, 1, 0, 0, 0, 0, 1, 0.0f, 1.0f},
+        { 0.5f, -0.5f,  0.5f, 1, 0, 0, 0, 0, 1, 1.0f, 1.0f},
+        { 0.5f,  0.5f,  0.5f, 1, 0, 0, 0, 0, 1, 1.0f, 0.0f},
+        { 0.5f,  0.5f, -0.5f, 1, 0, 0, 0, 0, 1, 0.0f, 0.0f},
+        // Top face
+        {-0.5f,  0.5f, -0.5f, 0, 1, 0, 0, 0, 1, 0.0f, 1.0f},
+        { 0.5f,  0.5f, -0.5f, 0, 1, 0, 0, 0, 1, 1.0f, 1.0f},
+        { 0.5f,  0.5f,  0.5f, 0, 1, 0, 0, 0, 1, 1.0f, 0.0f},
+        {-0.5f,  0.5f,  0.5f, 0, 1, 0, 0, 0, 1, 0.0f, 0.0f},
+        // Bottom face
+        {-0.5f, -0.5f,  0.5f, 0, -1, 0, 0, 0, -1, 0.0f, 1.0f},
+        { 0.5f, -0.5f,  0.5f, 0, -1, 0, 0, 0, -1, 1.0f, 1.0f},
+        { 0.5f, -0.5f, -0.5f, 0, -1, 0, 0, 0, -1, 1.0f, 0.0f},
+        {-0.5f, -0.5f, -0.5f, 0, -1, 0, 0, 0, -1, 0.0f, 0.0f}
     };
 
     D3D11_BUFFER_DESC desc = {};
@@ -373,12 +399,12 @@ HRESULT InitScene()
     if (SUCCEEDED(result))
     {
         static const USHORT Indices[36] = { 
-            0, 2, 1, 0, 3, 2, // œÂÂ‰Ìˇˇ
-            4, 6, 5, 4, 7, 6, // «‡‰Ìˇˇ
-            8, 10, 9, 8, 11, 10, // ÀÂ‚‡ˇ
-            12, 14, 13, 12, 15, 14, // œ‡‚‡ˇ
-            16, 18, 17, 16, 19, 18, // ¬ÂıÌˇˇ
-            20, 22, 21, 20, 23, 22  // ÕËÊÌˇˇ
+            0, 2, 1, 0, 3, 2, // –ü–µ—Ä–µ–¥–Ω—è—è
+            4, 6, 5, 4, 7, 6, // –ó–∞–¥–Ω—è—è
+            8, 10, 9, 8, 11, 10, // –õ–µ–≤–∞—è
+            12, 14, 13, 12, 15, 14, // –ü—Ä–∞–≤–∞—è
+            16, 18, 17, 16, 19, 18, // –í–µ—Ä—Ö–Ω—è—è
+            20, 22, 21, 20, 23, 22  // –ù–∏–∂–Ω—è—è
         };
 
         desc = {};
@@ -435,35 +461,16 @@ HRESULT InitScene()
         }
     }
 
-    ID3DBlob* pTransparentPixelShaderCode = nullptr;
-    if (SUCCEEDED(result))
-    {
-        if (SUCCEEDED(CompileShaderFromFile(L"transparent.ps", &pTransparentPixelShaderCode)))
-        {
-            result = m_pDevice->CreatePixelShader(
-                pTransparentPixelShaderCode->GetBufferPointer(),
-                pTransparentPixelShaderCode->GetBufferSize(),
-                nullptr,
-                &m_pTransparentPixelShader);
-            if (SUCCEEDED(result))
-            {
-                result = SetResourceName(m_pTransparentPixelShader, "transparent.ps");
-            }
-            SAFE_RELEASE(pTransparentPixelShaderCode);
-        }
-        else
-        {
-            return E_FAIL;
-        }
-    }
     if (SUCCEEDED(result))
     {
         static const D3D11_INPUT_ELEMENT_DESC InputDesc[] = {
             {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
-            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0}
+            {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TANGENT", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+            {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 36, D3D11_INPUT_PER_VERTEX_DATA, 0}
         };
 
-        result = m_pDevice->CreateInputLayout(InputDesc, 2, pVertexShaderCode->GetBufferPointer(), pVertexShaderCode->GetBufferSize(), &m_pInputLayout);
+        result = m_pDevice->CreateInputLayout(InputDesc, 4, pVertexShaderCode->GetBufferPointer(), pVertexShaderCode->GetBufferSize(), &m_pInputLayout);
         if (SUCCEEDED(result))
         {
             result = SetResourceName(m_pInputLayout, "InputLayout");
@@ -510,9 +517,19 @@ HRESULT InitScene()
     {
         result = DirectX::CreateDDSTextureFromFile(
             m_pDevice,
-            L"a.dds",
+            L"Brick.dds",
             nullptr,
             &m_pTextureView
+        );
+    }
+
+    if (SUCCEEDED(result))
+    {
+        result = DirectX::CreateDDSTextureFromFile(
+            m_pDevice,
+            L"BrickNM.dds",
+            nullptr,
+            &m_pNormalTextureView
         );
     }
 
@@ -628,6 +645,8 @@ HRESULT InitScene()
             v.x = sinf(theta) * cosf(phi);
             v.y = cosf(theta);
             v.z = sinf(theta) * sinf(phi);
+            v.nx = 0.0f; v.ny = 0.0f; v.nz = 0.0f;
+            v.tx = 0.0f; v.ty = 0.0f; v.tz = 0.0f;
             v.u = 0.0f; v.v = 0.0f;
             sphereVertices.push_back(v);
         }
@@ -662,12 +681,35 @@ HRESULT InitScene()
     m_pDevice->CreateBuffer(&sbDesc, &sbData, &m_pSkyboxIndexBuffer);
     
     ID3DBlob* pBlob = nullptr;
-    CompileShaderFromFile(L"skybox.vs", &pBlob);
-    m_pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &m_pSkyboxVertexShader);
+    result = CompileShaderFromFile(L"skybox.vs", &pBlob);
+    if (SUCCEEDED(result))
+    {
+        result = m_pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &m_pSkyboxVertexShader);
+        if (SUCCEEDED(result))
+        {
+            static const D3D11_INPUT_ELEMENT_DESC skyboxInputDesc[] = {
+                {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+                {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 36, D3D11_INPUT_PER_VERTEX_DATA, 0}
+            };
+            result = m_pDevice->CreateInputLayout(
+                skyboxInputDesc,
+                2,
+                pBlob->GetBufferPointer(),
+                pBlob->GetBufferSize(),
+                &m_pSkyboxInputLayout);
+            if (SUCCEEDED(result))
+            {
+                result = SetResourceName(m_pSkyboxInputLayout, "SkyboxInputLayout");
+            }
+        }
+    }
     SAFE_RELEASE(pBlob);
 
-    CompileShaderFromFile(L"skybox.ps", &pBlob);
-    m_pDevice->CreatePixelShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &m_pSkyboxPixelShader);
+    result = CompileShaderFromFile(L"skybox.ps", &pBlob);
+    if (SUCCEEDED(result))
+    {
+        result = m_pDevice->CreatePixelShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &m_pSkyboxPixelShader);
+    }
     SAFE_RELEASE(pBlob);
 
     DirectX::CreateDDSTextureFromFile(m_pDevice, L"skybox.dds", nullptr, &m_pSkyboxTextureView);
@@ -705,8 +747,24 @@ void Render()
         DirectX::XMVectorSet(1.0f, 1.0f, 0.0f, 1.0f),
         (float)angle * 0.65f);
 
+    DirectX::XMMATRIX cube1World = DirectX::XMMatrixMultiply(cubeRot1, DirectX::XMMatrixTranslation(-0.9f, 0.0f, 0.0f));
+    DirectX::XMMATRIX cube2World = DirectX::XMMatrixMultiply(
+        DirectX::XMMatrixMultiply(DirectX::XMMatrixScaling(0.75f, 0.75f, 0.75f), cubeRot2),
+        DirectX::XMMatrixTranslation(1.0f, 0.3f, 0.8f));
+    DirectX::XMVECTOR cube1Center = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(0, 0, 0, 1.0f), cube1World);
+    DirectX::XMVECTOR cube2Center = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(0, 0, 0, 1.0f), cube2World);
+    DirectX::XMFLOAT3 cube1CenterPos = {};
+    DirectX::XMFLOAT3 cube2CenterPos = {};
+    DirectX::XMStoreFloat3(&cube1CenterPos, cube1Center);
+    DirectX::XMStoreFloat3(&cube2CenterPos, cube2Center);
+    const float lightHeight = 2.0f;
+    const DirectX::XMFLOAT4 light0Pos = DirectX::XMFLOAT4(cube1CenterPos.x, cube1CenterPos.y + lightHeight, cube1CenterPos.z, 1.0f);
+    const DirectX::XMFLOAT4 light1Pos = DirectX::XMFLOAT4(cube2CenterPos.x, cube2CenterPos.y + lightHeight, cube2CenterPos.z, 1.0f);
+    const DirectX::XMFLOAT4 light0Color = DirectX::XMFLOAT4(1.0f, 0.9f, 0.8f, 4.0f);
+    const DirectX::XMFLOAT4 light1Color = DirectX::XMFLOAT4(0.70f, 0.85f, 1.0f, 4.5f);
+
     DirectX::XMMATRIX camRotation = DirectX::XMMatrixRotationRollPitchYaw(m_camRotX, m_camRotY, 0.0f);
-    DirectX::XMMATRIX camTransform = DirectX::XMMatrixMultiply(camRotation, DirectX::XMMatrixTranslation(0, 0, -5.5f));
+    DirectX::XMMATRIX camTransform = DirectX::XMMatrixMultiply(camRotation, DirectX::XMMatrixTranslation(0, 3.0f, -5.5f));
     DirectX::XMMATRIX v = DirectX::XMMatrixInverse(nullptr, camTransform);
 
     float projWidth = tanf(fov / 2) * 2 * f;
@@ -730,6 +788,22 @@ void Render()
         SceneBuffer& sceneBuffer = *reinterpret_cast<SceneBuffer*>(subresource.pData);
         sceneBuffer.vp = DirectX::XMMatrixMultiply(v, p);
         sceneBuffer.cameraPos = camPos;
+        sceneBuffer.lightCount.x = 2;
+        sceneBuffer.lightCount.y = 0;
+        sceneBuffer.lightCount.z = 0;
+        sceneBuffer.lightCount.w = 0;
+        sceneBuffer.ambientColor = DirectX::XMFLOAT4(0.08f, 0.08f, 0.10f, 1.0f);
+
+        for (int i = 0; i < 10; ++i)
+        {
+            sceneBuffer.lights[i].pos = DirectX::XMFLOAT4(0, 0, 0, 1);
+            sceneBuffer.lights[i].color = DirectX::XMFLOAT4(0, 0, 0, 0);
+        }
+
+        sceneBuffer.lights[0].pos = light0Pos;
+        sceneBuffer.lights[0].color = light0Color;
+        sceneBuffer.lights[1].pos = light1Pos;
+        sceneBuffer.lights[1].color = light1Color;
         m_pDeviceContext->Unmap(m_pSceneBuffer, 0);
     }
 
@@ -768,7 +842,7 @@ void Render()
     ID3D11SamplerState* samplers[] = { m_pSampler };
     m_pDeviceContext->PSSetSamplers(0, 1, samplers);
 
-    UINT strides[] = { 20 };
+    UINT strides[] = { sizeof(Vertex) };
     UINT offsets[] = { 0 };
 
     m_pDeviceContext->IASetIndexBuffer(m_pIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
@@ -781,34 +855,57 @@ void Render()
     m_pDeviceContext->VSSetShader(m_pVertexShader, nullptr, 0);
     m_pDeviceContext->PSSetShader(m_pPixelShader, nullptr, 0);
 
-    ID3D11ShaderResourceView* resources[] = { m_pTextureView };
-    m_pDeviceContext->PSSetShaderResources(0, 1, resources);
+    ID3D11ShaderResourceView* resources[] = { m_pTextureView, m_pNormalTextureView };
+    m_pDeviceContext->PSSetShaderResources(0, 2, resources);
 
     GeomBuffer cubeGeom = {};
     cubeGeom.size = DirectX::XMFLOAT4(0, 0, 0, 0);
     cubeGeom.color = DirectX::XMFLOAT4(1, 1, 1, 1);
-
-    DirectX::XMMATRIX cube1World = DirectX::XMMatrixMultiply(cubeRot1, DirectX::XMMatrixTranslation(-0.9f, 0.0f, 0.0f));
-    DirectX::XMVECTOR cube1Center = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(0, 0, 0, 1.0f), cube1World);
+    cubeGeom.material = DirectX::XMFLOAT4(36.0f, 1.0f, 1.0f, 1.0f);
     cubeGeom.m = cube1World;
+    cubeGeom.normalM = DirectX::XMMatrixTranspose(DirectX::XMMatrixInverse(nullptr, cube1World));
     m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &cubeGeom, 0, 0);
     m_pDeviceContext->DrawIndexed(36, 0, 0);
 
-    DirectX::XMMATRIX cube2World = DirectX::XMMatrixMultiply(
-        DirectX::XMMatrixMultiply(DirectX::XMMatrixScaling(0.75f, 0.75f, 0.75f), cubeRot2),
-        DirectX::XMMatrixTranslation(1.0f, 0.3f, 0.8f));
     cubeGeom.m = cube2World;
+    cubeGeom.normalM = DirectX::XMMatrixTranspose(DirectX::XMMatrixInverse(nullptr, cube2World));
     m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &cubeGeom, 0, 0);
     m_pDeviceContext->DrawIndexed(36, 0, 0);
+
+    GeomBuffer lightMarkerGeom = {};
+    lightMarkerGeom.size = DirectX::XMFLOAT4(0, 0, 0, 0);
+    lightMarkerGeom.material = DirectX::XMFLOAT4(0.0f, 1.0f, 0.0f, -1.0f);
+    const float markerRadius = 0.07f;
+
+    lightMarkerGeom.m = DirectX::XMMatrixMultiply(
+        DirectX::XMMatrixScaling(markerRadius, markerRadius, markerRadius),
+        DirectX::XMMatrixTranslation(light0Pos.x, light0Pos.y, light0Pos.z));
+    lightMarkerGeom.normalM = DirectX::XMMatrixTranspose(DirectX::XMMatrixInverse(nullptr, lightMarkerGeom.m));
+    lightMarkerGeom.color = DirectX::XMFLOAT4(light0Color.x, light0Color.y, light0Color.z, 1.0f);
+    m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &lightMarkerGeom, 0, 0);
+    m_pDeviceContext->IASetIndexBuffer(m_pSkyboxIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+    m_pDeviceContext->IASetVertexBuffers(0, 1, &m_pSkyboxVertexBuffer, strides, offsets);
+    m_pDeviceContext->DrawIndexed(m_SkyboxIndexCount, 0, 0);
+
+    lightMarkerGeom.m = DirectX::XMMatrixMultiply(
+        DirectX::XMMatrixScaling(markerRadius, markerRadius, markerRadius),
+        DirectX::XMMatrixTranslation(light1Pos.x, light1Pos.y, light1Pos.z));
+    lightMarkerGeom.normalM = DirectX::XMMatrixTranspose(DirectX::XMMatrixInverse(nullptr, lightMarkerGeom.m));
+    lightMarkerGeom.color = DirectX::XMFLOAT4(light1Color.x, light1Color.y, light1Color.z, 1.0f);
+    m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &lightMarkerGeom, 0, 0);
+    m_pDeviceContext->DrawIndexed(m_SkyboxIndexCount, 0, 0);
 
     m_pDeviceContext->OMSetDepthStencilState(m_pSkyboxDepthState, 0);
 
     GeomBuffer skyboxGeom = {};
     skyboxGeom.m = DirectX::XMMatrixIdentity();
     skyboxGeom.size = DirectX::XMFLOAT4(radius, 0.0f, 0.0f, 0.0f);
+    skyboxGeom.normalM = DirectX::XMMatrixIdentity();
     skyboxGeom.color = DirectX::XMFLOAT4(1, 1, 1, 1);
+    skyboxGeom.material = DirectX::XMFLOAT4(0, 1, 0, 0);
     m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &skyboxGeom, 0, 0);
 
+    m_pDeviceContext->IASetInputLayout(m_pSkyboxInputLayout);
     m_pDeviceContext->IASetIndexBuffer(m_pSkyboxIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
     m_pDeviceContext->IASetVertexBuffers(0, 1, &m_pSkyboxVertexBuffer, strides, offsets);
     m_pDeviceContext->VSSetShader(m_pSkyboxVertexShader, nullptr, 0);
@@ -818,12 +915,12 @@ void Render()
     m_pDeviceContext->DrawIndexed(m_SkyboxIndexCount, 0, 0);
     m_pDeviceContext->RSSetState(nullptr);
 
+    m_pDeviceContext->IASetInputLayout(m_pInputLayout);
     m_pDeviceContext->IASetIndexBuffer(m_pIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
     m_pDeviceContext->IASetVertexBuffers(0, 1, vertexBuffers, strides, offsets);
     m_pDeviceContext->VSSetShader(m_pVertexShader, nullptr, 0);
-    m_pDeviceContext->PSSetShader(m_pTransparentPixelShader, nullptr, 0);
-    ID3D11ShaderResourceView* nullResource[] = { nullptr };
-    m_pDeviceContext->PSSetShaderResources(0, 1, nullResource);
+    m_pDeviceContext->PSSetShader(m_pPixelShader, nullptr, 0);
+    m_pDeviceContext->PSSetShaderResources(0, 2, resources);
     m_pDeviceContext->OMSetDepthStencilState(m_pTransDepthState, 0);
     float blendFactor[4] = { 0, 0, 0, 0 };
     m_pDeviceContext->OMSetBlendState(m_pTransBlendState, blendFactor, 0xFFFFFFFF);
@@ -877,7 +974,9 @@ void Render()
         GeomBuffer transGeom = {};
         transGeom.m = item.world;
         transGeom.size = DirectX::XMFLOAT4(0, 0, 0, 0);
+        transGeom.normalM = DirectX::XMMatrixTranspose(DirectX::XMMatrixInverse(nullptr, item.world));
         transGeom.color = item.color;
+        transGeom.material = DirectX::XMFLOAT4(26.0f, 1.0f, 0.0f, 0.0f);
         m_pDeviceContext->UpdateSubresource(m_pGeomBuffer, 0, nullptr, &transGeom, 0, 0);
         m_pDeviceContext->DrawIndexed(36, 0, 0);
     }
@@ -894,7 +993,6 @@ void Cleanup()
     SAFE_RELEASE(m_pInputLayout);
     SAFE_RELEASE(m_pVertexShader);
     SAFE_RELEASE(m_pPixelShader);
-    SAFE_RELEASE(m_pTransparentPixelShader);
     SAFE_RELEASE(m_pIndexBuffer);
     SAFE_RELEASE(m_pVertexBuffer);
 
@@ -915,11 +1013,13 @@ void Cleanup()
 
     SAFE_RELEASE(m_pSampler);
     SAFE_RELEASE(m_pTextureView);
+    SAFE_RELEASE(m_pNormalTextureView);
 
     SAFE_RELEASE(m_pSkyboxVertexBuffer);
     SAFE_RELEASE(m_pSkyboxIndexBuffer);
     SAFE_RELEASE(m_pSkyboxVertexShader);
     SAFE_RELEASE(m_pSkyboxPixelShader);
+    SAFE_RELEASE(m_pSkyboxInputLayout);
     SAFE_RELEASE(m_pSkyboxTextureView);
 
     if (m_pDevice)
@@ -938,7 +1038,7 @@ void Cleanup()
     }
 }
 
-//Ó·‡·ÓÚÍ‡ ÒÓÓ·˘ÂÌËÈ
+//–æ–±—Ä–∞–±–æ—Ç–∫–∞ —Å–æ–æ–±—â–µ–Ω–∏–π
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
@@ -975,7 +1075,3 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     }
     return 0;
 }
-
-
-
-
