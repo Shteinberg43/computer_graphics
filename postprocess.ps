@@ -1,0 +1,26 @@
+cbuffer PostProcessBuffer : register(b0)
+{
+    int4 mode;
+};
+
+Texture2D colorTexture : register(t0);
+SamplerState colorSampler : register(s0);
+
+struct VSOutput
+{
+    float4 pos : SV_Position;
+    float2 uv : TEXCOORD;
+};
+
+float4 ps(VSOutput pixel) : SV_Target0
+{
+    float4 color = colorTexture.Sample(colorSampler, pixel.uv);
+
+    if (mode.x == 1)
+    {
+        float gray = dot(color.xyz, float3(0.299f, 0.587f, 0.114f));
+        color.xyz = float3(gray, gray, gray);
+    }
+
+    return color;
+}

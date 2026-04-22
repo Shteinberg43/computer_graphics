@@ -1,0 +1,83 @@
+struct Light
+{
+    float4 pos;
+    float4 color;
+};
+
+struct GeomInstData
+{
+    row_major float4x4 model;
+    row_major float4x4 norm;
+    float4 shineSpeedTexIdNM;
+    float4 posAngle;
+};
+
+cbuffer SceneBuffer : register(b1)
+{
+    row_major float4x4 vp;
+    float4 cameraPos;
+    int4 lightCount;
+    Light lights[10];
+    float4 ambientColor;
+};
+
+cbuffer GeomBufferInst : register(b2)
+{
+    GeomInstData geomInst[100];
+};
+
+Texture2DArray colorTexture : register(t0);
+Texture2D normalMapTexture : register(t1);
+SamplerState colorSampler : register(s0);
+
+struct VSOutput
+{
+    float4 pos : SV_Position;
+    float3 worldPos : TEXCOORD0;
+    float3 norm : TEXCOORD1;
+    float3 tang : TEXCOORD2;
+    float2 uv : TEXCOORD3;
+    nointerpolation uint instanceId : TEXCOORD4;
+};
+
+float4 ps(VSOutput pixel) : SV_Target0
+{
+    GeomInstData item = geomInst[pixel.instanceId];
+    float shininess = item.shineSpeedTexIdNM.x;
+    float texId = item.shineSpeedTexIdNM.z;
+    float useNormalMap = item.shineSpeedTexIdNM.w;
+
+    float4 baseSample = colorTexture.Sample(colorSampler, float3(pixel.uv, texId));
+    float3 albedo = baseSample.xyz;
+
+    float3 normal = normalize(pixel.norm);
+    if (useNormalMap > 0.5f)
+    {
+        float3 tangent = normalize(pixel.tang - dot(pixel.tang, normal) * normal);
+        float3 binormal = normalize(cross(normal, tangent));
+        float3 localNorm = normalMapTexture.Sample(colorSampler, pixel.uv).xyz * 2.0f - 1.0f;
+        normal = normalize(localNorm.x * tangent + localNorm.y * binormal + localNorm.z * normal);
+    }
+
+    float3 finalColor = ambientColor.xyz * albedo;
+    float3 viewDir = normalize(cameraPos.xyz - pixel.worldPos);
+    int count = clamp(lightCount.x, 0, 10);
+
+    for (int i = 0; i < count; ++i)
+    {
+        float3 lightVec = lights[i].pos.xyz - pixel.worldPos;
+        float dist = length(lightVec);
+        float3 lightDir = dist > 1e-4f ? (lightVec / dist) : float3(0.0f, 1.0f, 0.0f);
+        float att = 1.0f / max(dist * dist, 0.01f);
+        float3 lightColor = lights[i].color.xyz * lights[i].color.w;
+
+        float diff = max(dot(lightDir, normal), 0.0f);
+        finalColor += albedo * diff * att * lightColor;
+
+        float3 reflectDir = reflect(-lightDir, normal);
+        float spec = shininess > 0.0f ? pow(max(dot(viewDir, reflectDir), 0.0f), shininess) : 0.0f;
+        finalColor += albedo * spec * att * lightColor * 0.5f;
+    }
+
+    return float4(saturate(finalColor), 1.0f);
+}
